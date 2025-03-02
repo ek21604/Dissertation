@@ -2,7 +2,7 @@ import os
 import glob
 import torch
 from torch import optim, nn, utils
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms, models
 from torchvision.io import read_image
 import torch.nn.functional as F
 import lightning as L
@@ -20,7 +20,7 @@ valid_dir = "C:\\Users\\price\\Documents\\Uni\\Dis\\F1 Highlight Videos\\Images\
 testing_dir = "C:\\Users\\price\\Documents\\Uni\\Dis\\F1 Highlight Videos\\Images\\Testing"
 # cockpit:0 other:1
 
-writer = SummaryWriter("runs/F1_Classifier")
+writer = SummaryWriter()
 
 transform = transforms.Compose([
     transforms.Resize((128, 128)),
@@ -39,33 +39,22 @@ test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=F
 class Classifier(L.LightningModule):
     def __init__(self):
         super().__init__()
-        self.conv_layers = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-        )
-
-        self.fc_layers = nn.Sequential(
-            nn.Linear(128 * 16 * 16, 128),
-            nn.ReLU(),
-            nn.Linear(128, 2)
-        )
+        self.model = models.resnet50(pretrained = True)
+        self.model.fc = nn.Linear(self.model.fc.in_features, 2)
         self.train_losses = []
         self.train_accuracies = []
+        self.val_losses = []
+        self.val_accuracies = []
 
-    def forward(self, x):
-        x = self.conv_layers(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc_layers(x)
-        return x
+        self.training_epoch_loss = 0
+        self.training_epoch_acc = 0
+        self.validation_epoch_loss = 0
+        self.validation_epoch_acc = 0
+        self.train_batches = 0
+        self.val_batches = 0
+
+    def forward(self, x): 
+        return self.model(x)
         
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -73,13 +62,34 @@ class Classifier(L.LightningModule):
         logits = self(x)
         loss = nn.functional.cross_entropy(logits, y)
         acc = (logits.argmax(dim=1) == y).float().mean()
-        self.train_losses.append(loss.item())
+        """self.train_losses.append(loss.item())
         self.train_accuracies.append(acc.item())
         self.log("train_loss", loss, prog_bar=True)
         self.log("train_acc", acc, prog_bar=True)
-        writer.add_scalar("Loss/train", loss, batch_idx)
-        writer.add_scalar("Accuracy/train", acc, batch_idx)
+        writer.add_scalar("Loss/train", loss, self.current_epoch)
+        writer.add_scalar("Accuracy/train", acc, self.current_epoch)
+        print(f"Index: {batch_idx}")
+        print(f"Loss: {loss}")
+        print(f"Acc: {acc}")
+        print(f"Epoch: {self.current_epoch}")"""
+
+        self.training_epoch_loss += loss.item()
+        self.training_epoch_acc += acc.item()
+        self.train_batches += 1
         return loss
+
+    def on_train_epoch_end(self):
+        avg_loss = self.training_epoch_loss / self.train_batches
+        avg_acc = self.training_epoch_acc / self.train_batches
+        self.train_losses.append(avg_loss)
+        self.train_accuracies.append(avg_acc)
+
+        writer.add_scalar("Loss/train", avg_loss, self.current_epoch)
+        writer.add_scalar("Accuracy/train", avg_acc, self.current_epoch)
+
+        self.training_epoch_loss = 0
+        self.training_epoch_acc = 0
+        self.train_batches = 0
     
     def validation_step(self, batch, batch_idx):
         x, y = batch
@@ -87,10 +97,27 @@ class Classifier(L.LightningModule):
         logits = self(x)
         loss = nn.functional.cross_entropy(logits, y)
         acc = (logits.argmax(dim=1) == y).float().mean()
-        self.log("val_loss", loss, prog_bar=True)
+        """self.log("val_loss", loss, prog_bar=True)
         self.log("val_acc", acc, prog_bar=True)
-        writer.add_scalar("Loss/val", loss, batch_idx)
-        writer.add_scalar("Accuracy/val", acc, batch_idx)
+        writer.add_scalar("Loss/val", loss, self.current_epoch)
+        writer.add_scalar("Accuracy/val", acc, self.current_epoch)"""
+
+        self.validation_epoch_loss += loss.item()
+        self.validation_epoch_acc += acc.item()
+        self.val_batches += 1
+
+    def on_validation_epoch_end(self):
+        avg_loss = self.validation_epoch_loss / self.val_batches
+        avg_acc = self.validation_epoch_acc / self.val_batches
+        self.val_losses.append(avg_loss)
+        self.val_accuracies.append(avg_acc)
+
+        writer.add_scalar("Loss/val", avg_loss, self.current_epoch)
+        writer.add_scalar("Accuracy/val", avg_acc, self.current_epoch)
+
+        self.validation_epoch_loss = 0
+        self.validation_epoch_acc = 0
+        self.val_batches = 0
         
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=1e-3)
@@ -102,7 +129,7 @@ if os.path.exists(model_path):
     classifier.load_state_dict(torch.load(model_path))
     print(f"Model loaded from {model_path}")
 else:
-    trainer = L.Trainer(max_epochs=2)
+    trainer = L.Trainer(max_epochs=4, limit_train_batches=200)
     trainer.fit(model=classifier, train_dataloaders=train_loader, val_dataloaders=val_loader)
     torch.save(classifier.state_dict(), model_path)
     print(f"Model saved to {model_path}")
