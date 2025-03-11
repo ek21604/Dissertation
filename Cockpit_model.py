@@ -27,13 +27,18 @@ writer = SummaryWriter()
 
 transform = transforms.Compose([
     transforms.Resize((128, 128)),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(15),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2),
+    transforms.transforms.GaussianBlur(kernel_size=3),
+    transforms.RandomApply([transforms.GaussianBlur(kernel_size=5)], p=0.5),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
 ])
 
 train_dataset = datasets.ImageFolder(training_dir, transform=transform)
 val_dataset = datasets.ImageFolder(valid_dir, transform=transform)
-test_dataset = datasets.ImageFolder(testing_dir, transform=transform)
+test_dataset = datasets.ImageFolder(testing_dir)
 
 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=32, shuffle=True)
 val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=32, shuffle=False)
