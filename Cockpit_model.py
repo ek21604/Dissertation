@@ -11,6 +11,9 @@ from sklearn.metrics import roc_curve, auc
 import numpy as np
 import random
 from torch.utils.tensorboard import SummaryWriter
+from sklearn.preprocessing import label_binarize
+from itertools import cycle
+import time
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -40,7 +43,7 @@ class Classifier(L.LightningModule):
     def __init__(self):
         super().__init__()
         self.model = models.resnet50(pretrained = True)
-        self.model.fc = nn.Linear(self.model.fc.in_features, 2)
+        self.model.fc = nn.Linear(self.model.fc.in_features, 11)
         self.train_losses = []
         self.train_accuracies = []
         self.val_losses = []
@@ -62,16 +65,6 @@ class Classifier(L.LightningModule):
         logits = self(x)
         loss = nn.functional.cross_entropy(logits, y)
         acc = (logits.argmax(dim=1) == y).float().mean()
-        """self.train_losses.append(loss.item())
-        self.train_accuracies.append(acc.item())
-        self.log("train_loss", loss, prog_bar=True)
-        self.log("train_acc", acc, prog_bar=True)
-        writer.add_scalar("Loss/train", loss, self.current_epoch)
-        writer.add_scalar("Accuracy/train", acc, self.current_epoch)
-        print(f"Index: {batch_idx}")
-        print(f"Loss: {loss}")
-        print(f"Acc: {acc}")
-        print(f"Epoch: {self.current_epoch}")"""
 
         self.training_epoch_loss += loss.item()
         self.training_epoch_acc += acc.item()
@@ -97,10 +90,6 @@ class Classifier(L.LightningModule):
         logits = self(x)
         loss = nn.functional.cross_entropy(logits, y)
         acc = (logits.argmax(dim=1) == y).float().mean()
-        """self.log("val_loss", loss, prog_bar=True)
-        self.log("val_acc", acc, prog_bar=True)
-        writer.add_scalar("Loss/val", loss, self.current_epoch)
-        writer.add_scalar("Accuracy/val", acc, self.current_epoch)"""
 
         self.validation_epoch_loss += loss.item()
         self.validation_epoch_acc += acc.item()
@@ -123,22 +112,22 @@ class Classifier(L.LightningModule):
         return optim.Adam(self.parameters(), lr=1e-3)
     
 #load or train model
-model_path = "f1_model.pth"
+model_path = "model.pth"
 classifier = Classifier().to(device)
 if os.path.exists(model_path):
     classifier.load_state_dict(torch.load(model_path))
     print(f"Model loaded from {model_path}")
 else:
-    trainer = L.Trainer(max_epochs=4, limit_train_batches=200)
+    trainer = L.Trainer(max_epochs=4)
     trainer.fit(model=classifier, train_dataloaders=train_loader, val_dataloaders=val_loader)
     torch.save(classifier.state_dict(), model_path)
     print(f"Model saved to {model_path}")
 
 writer.close()
-print("To view TensorBoard logs, run: tensorboard --logdir=runs/F1_Classifier")
+print("To view TensorBoard logs, run: tensorboard --logdir=runs/")
 
 #loss and accuracy plots
-plt.figure(figsize=(12, 5))
+'''plt.figure(figsize=(12, 5))
 
 plt.subplot(1, 2, 1)
 plt.plot(classifier.train_losses, label='Training Loss')
@@ -155,15 +144,18 @@ plt.title('Training Accuracy over Epochs')
 plt.legend()
 
 plt.tight_layout()
-plt.show()
+plt.show()'''
 
 #test model
 classifier.eval()
+
 correct_predictions = 0
 total_predictions = 0
 all_labels = []
 all_probs = []
 misclassified_samples = []
+
+team_names = train_dataset.classes
 
 with torch.no_grad():
     for batch in test_loader:
@@ -188,9 +180,15 @@ print(f"Overall Accuracy on Test Set: {accuracy:.2f}%")
 #plot ROC curve
 all_labels = np.array(all_labels)
 all_probs = np.array(all_probs)
-fpr, tpr, _ = roc_curve(all_labels, all_probs[:, 1])
-roc_auc = auc(fpr, tpr)
-plt.plot(fpr, tpr, label=f'AUC = {roc_auc:.2f}')
+#fpr, tpr, _ = roc_curve(all_labels, all_probs[:, 1])
+#roc_auc = auc(fpr, tpr)
+#plt.plot(fpr, tpr, label=f'AUC = {roc_auc:.2f}')
+plt.figure(figsize=(12, 8))
+for i, team in enumerate(zip(team_names)):  # For each digit class
+    fpr, tpr, _ = roc_curve((all_labels == i).astype(int), all_probs[:, i])
+    roc_auc = auc(fpr, tpr)
+    plt.plot(fpr, tpr, label=f' {team} (AUC = {roc_auc:.2f})')
+
 plt.plot([0, 1], [0, 1], 'k--')
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
@@ -198,142 +196,60 @@ plt.title('ROC Curve')
 plt.legend()
 plt.show()
 
+'''
 #sample predictions
-plt.figure(figsize=(12, 6))
+plt.figure(figsize=(12, 8))
 #random_indices = random.sample(range(len(test_dataset)), 10)
-num_samples = min(10, len(misclassified_samples))
+num_samples = len(misclassified_samples)
 for i in range(num_samples):
     image, actual_label, predicted_label = misclassified_samples[i]
-    plt.subplot(2, 5, i + 1)
+    actual_team = team_names[actual_label]
+    predicted_team = team_names[predicted_label]
+    plt.subplot((num_samples // 5) + 1, 5, i + 1)
     plt.imshow(image.permute(1, 2, 0).numpy())
-    plt.title(f"Pred: {predicted_label} | Actual: {actual_label}")
+    plt.title(f"Pred: {predicted_team} | Actual: {actual_team}", fontsize=8)
     plt.axis("off")
 plt.tight_layout()
 plt.show()
-
 '''
-# initialize classifier
-model_path = "cockpit_model.pth"
-classifier = Classifier().to(device)
 
-# Load model if it exists
-if os.path.exists(model_path):
-    classifier.load_state_dict(torch.load(model_path, map_location=device))
-    print("Model loaded from checkpoint!")
-    classifier.eval()
-else:
-    print("No saved model found, training from scratch.")
+images_per_page = 10
+num_pages = (len(misclassified_samples) + images_per_page - 1) // images_per_page  # Total pages
 
-# Train only if needed
-train_model = False  # Set to True if you want to train
-if train_model:
-    trainer = L.Trainer(max_epochs=2)
-    trainer.fit(classifier, train_loader)
-    torch.save(classifier.state_dict(), model_path)
-    print("Model saved after training!")
+def show_misclassified_images():
+    """
+    Automatically scrolls through misclassified images in pages.
+    Each page shows 10 images (5 per row, 2 rows).
+    """
+    for page in range(num_pages):
+        start_idx = page * images_per_page
+        end_idx = min(start_idx + images_per_page, len(misclassified_samples))
+        num_images = end_idx - start_idx
 
-# Testing
-classifier.eval()
-print(f"Testing dir : {testing_dir}")
+        if num_images == 0:
+            print("No misclassified images to display.")
+            return
 
-cockpit_images = glob.glob(os.path.join(testing_dir, "Cockpit", "*.*"))
-other_images = glob.glob(os.path.join(testing_dir, "Other", "*.*"))
+        plt.figure(figsize=(12, 5))  # Adjust figure size for 5x2 layout
 
-print(f"Number of Cockpit images found: {len(cockpit_images)}")
-print(f"Number of Other images found: {len(other_images)}")
+        for i, idx in enumerate(range(start_idx, end_idx)):
+            image, actual_label, predicted_label = misclassified_samples[idx]
+            actual_team = team_names[actual_label]  # Convert label index to team name
+            predicted_team = team_names[predicted_label]
 
-test_images_paths = cockpit_images + other_images
+            plt.subplot(2, 5, i + 1)  # 2 rows, 5 columns
+            plt.imshow(image.permute(1, 2, 0).numpy())
+            plt.title(f"Pred: {predicted_team}\nActual: {actual_team}", fontsize=8)
+            plt.axis("off")
 
-if not cockpit_images:
-    print("⚠️ Warning: No Cockpit images found in testing directory!")
-if not other_images:
-    print("⚠️ Warning: No Other images found in testing directory!")
+        plt.tight_layout()
+        plt.show()
 
-def preprocess_image(image_path):
-    image = read_image(image_path).float() / 255.0
-    image = transforms.Resize((128, 128))(image)
-    image = transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])(image)
-    return image.unsqueeze(0)
+        print(f"Page {page + 1} of {num_pages}")
+        
+        # Pause before showing the next page
+        if page < num_pages - 1:
+            input("Press Enter to continue to the next page...")
 
-y_true = []
-y_score = []
-
-image_num = range(1, len(train_losses) + 1)
-
-plt.figure(figsize=(12,5))
-#plot loss
-plt.subplot(1,2,1)
-plt.plot(image_num, train_losses, label='Loss')
-plt.xlabel('Images')
-plt.ylabel('Loss')
-plt.title('Loss vs Images')
-plt.legend()
-
-#plot accuracy
-plt.subplot(1, 2, 2)
-plt.plot(image_num, train_accuracies, label='Accuracy', color='green')
-plt.xlabel('Images')
-plt.ylabel('Accuracy')
-plt.title('Accuracy vs Images')
-plt.legend()
-
-plt.tight_layout()
-plt.show()
-
-for image_path in test_images_paths:
-    image = preprocess_image(image_path).to(device)
-    label = 0 if 'Cockpit' in image_path else 1
-    y_true.append(label)
-
-    with torch.no_grad():
-        logits = classifier(image)
-        prob = F.softmax(logits, dim=1)[:, 1].cpu().numpy()
-
-    y_score.append(prob)
-
-y_true = np.array(y_true)
-y_score = np.array(y_score).flatten()
-
-print(f"Unique values in y_true: {set(y_true)}")
-print(f"Shape of y_score: {y_score.shape}")
-print(f"Shape of y_true: {y_true.shape}")
-print(y_true)
-print(y_score)
-
-if len(set(y_true)) < 2:
-    raise ValueError("y_true contains only one class. Ensure test images from both categories are included.")
-
-fpr, tpr, thresholds = roc_curve(y_true, y_score)
-roc_auc = auc(fpr, tpr)
-
-plt.figure(figsize=(8, 6))
-plt.plot(fpr, tpr, color='blue', label=f'ROC curve (area = {roc_auc:.2f})')
-plt.plot([0, 1], [0, 1], color='gray', linestyle='--')
-plt.xlim([0.0, 1.0])
-plt.ylim([0.0, 1.05])
-plt.xlabel('False Positive Rate')
-plt.ylabel('True Positive Rate')
-plt.title('ROC Curve')
-plt.legend(loc='lower right')
-plt.show()
-
-
-#Display Sample Predictions 
-plt.figure(figsize=(12, 6))
-num_samples = 10
-for i in range(num_samples):
-    image, label = test_dataset[i]
-    image_input = image.unsqueeze(0).to(device)
-
-    with torch.no_grad():
-        logits = classifier(image_input)
-        predicted_class = logits.argmax(dim=1).item()
-
-    plt.subplot(2, 5, i + 1)
-    plt.imshow(image)
-    plt.title(f"Pred: {predicted_class} | Actual: {label}")
-    plt.axis("off")
-    
-plt.tight_layout()
-plt.show()
-'''
+# Run automated display
+show_misclassified_images()
