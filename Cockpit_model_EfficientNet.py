@@ -249,7 +249,7 @@ def show_gradcam_for_predictions(model, test_loader, target_layer, team_names):
         plot_gradcam(misclassified_samples, "Misclassified Images with Grad-CAM")
 
 #load or train model
-model_path = "models/EfficientNet.pth"
+model_path = "EfficientNet.pth"
 classifier = Classifier().to(device)
 if os.path.exists(model_path):
     classifier.load_state_dict(torch.load(model_path))
