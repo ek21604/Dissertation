@@ -17,6 +17,7 @@ import time
 import cv2
 from torchvision.models import efficientnet_b0
 import seaborn as sns
+from gradcam import GradCAM
 
 # Set device for computation (GPU if available, else CPU)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -64,7 +65,7 @@ class Classifier(L.LightningModule):
     def __init__(self):
         super().__init__()
         # Load pretrained ResNet50 model
-        self.model = models.resnet50(pretrained=True)
+        self.model = models.resnet18(pretrained=True)
         
         # Modify the final fully connected layer for our 11 classes
         num_features = self.model.fc.in_features
@@ -145,45 +146,7 @@ class Classifier(L.LightningModule):
         
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=1e-3)
-    
-class GradCAM:
-    def __init__(self, model, target_layer):
-        self.model = model
-        self.target_layer = target_layer
-        self.gradients = None
-        self.activations = None
-        self.register_hooks()
 
-    def register_hooks(self):
-        def forward_hook(module, input, output):
-            self.activations = output.detach()
-
-        def backward_hook(module, grad_input, grad_output):
-            self.gradients = grad_output[0].detach()
-        
-        self.target_layer.register_forward_hook(forward_hook)
-        self.target_layer.register_backward_hook(backward_hook)
-
-    def generate_cam(self, input_tensor, class_idx):
-        self.model.zero_grad()
-        output = self.model(input_tensor)
-        target_class = output[:, class_idx]
-        target_class.backward()
-
-        # Compute weights and generate CAM
-        gradients = self.gradients
-        activations = self.activations
-
-        weights = torch.mean(gradients, dim=(2, 3), keepdim=True)
-        cam = torch.sum(weights * activations, dim=1).squeeze()
-
-        # Normalize CAM
-        cam = F.relu(cam)
-        cam -= cam.min()
-        cam /= cam.max()
-        cam = cam.cpu().numpy()
-        cam = cv2.resize(cam, (input_tensor.shape[2], input_tensor.shape[3]))
-        return cam
     
 def apply_gradcam(model, image_tensor, class_idx, target_layer, label):
     gradcam = GradCAM(model, target_layer)
@@ -247,7 +210,7 @@ def show_gradcam_for_predictions(model, test_loader, target_layer, team_names):
 # Main execution
 if __name__ == "__main__":
     # Load or train model
-    model_path = "ResNet50.pth"
+    model_path = "Models/resnet18.pth"
     classifier = Classifier().to(device)
     
     if os.path.exists(model_path):
@@ -306,6 +269,10 @@ if __name__ == "__main__":
     plt.ylabel('Actual')
     plt.title('Confusion Matrix')
     plt.show()
+
+    #classification report 
+    report = classification_report(all_labels, all_preds, target_names=team_names)
+    print("Classification Report:\n", report)
 
     # Generate and display ROC curves
     all_labels = np.array(all_labels)

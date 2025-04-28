@@ -17,6 +17,8 @@ import time
 import cv2
 from torchvision.models import efficientnet_b0
 import seaborn as sns
+from gradcam import GradCAM
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -161,48 +163,13 @@ class Classifier(L.LightningModule):
         
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=1e-3)
-    
-class GradCAM:
-    def __init__(self, model, target_layer):
-        self.model = model
-        self.target_layer = target_layer
-        self.gradients = None
-        self.activations = None
-        self.register_hooks()
-
-    def register_hooks(self):
-        def forward_hook(module, input, output):
-            self.activations = output.detach()
-
-        def backward_hook(module, grad_input, grad_output):
-            self.gradients = grad_output[0].detach()
-        
-        self.target_layer.register_forward_hook(forward_hook)
-        self.target_layer.register_backward_hook(backward_hook)
-
-    def generate_cam(self, input_tensor, class_idx):
-        self.model.zero_grad()
-        output = self.model(input_tensor)
-        target_class = output[:, class_idx]
-        target_class.backward()
-
-        gradients = self.gradients
-        activations = self.activations
-
-        weights = torch.mean(gradients, dim=(2, 3), keepdim=True)
-        cam = torch.sum(weights * activations, dim=1).squeeze()
-
-        cam = F.relu(cam)
-        cam -= cam.min()
-        cam /= cam.max()
-        cam = cam.cpu().numpy()
-        cam = cv2.resize(cam, (input_tensor.shape[2], input_tensor.shape[3]))
-        return cam
 
 def apply_gradcam(model, image_tensor, class_idx, target_layer, label):
+    """Apply Grad-CAM visualization to a single image"""
     gradcam = GradCAM(model, target_layer)
     cam = gradcam.generate_cam(image_tensor.unsqueeze(0), class_idx)
 
+    # Plot the image with Grad-CAM overlay
     plt.figure(figsize=(8, 8))
     image_np = image_tensor.permute(1, 2, 0).cpu().numpy()
     plt.imshow(image_np)
@@ -212,11 +179,12 @@ def apply_gradcam(model, image_tensor, class_idx, target_layer, label):
     plt.show()
 
 def show_gradcam_for_predictions(model, test_loader, target_layer, team_names):
+    """Display Grad-CAM visualizations for both correct and incorrect predictions"""
     model.eval()
     correct_samples = []
     misclassified_samples = []
 
-    # Collect samples from the test set
+    # Collect samples from test set
     with torch.no_grad():
         for batch in test_loader:
             images, labels = batch
@@ -235,6 +203,7 @@ def show_gradcam_for_predictions(model, test_loader, target_layer, team_names):
     misclassified_samples = random.sample(misclassified_samples, min(10, len(misclassified_samples)))
 
     def plot_gradcam(samples, title):
+        """Helper function to plot Grad-CAM visualizations"""
         plt.figure(figsize=(15, 6))
         for i, (image, actual_label, predicted_label) in enumerate(samples):
             plt.subplot(2, 5, i + 1)
@@ -260,7 +229,7 @@ def show_gradcam_for_predictions(model, test_loader, target_layer, team_names):
 # Main execution block
 if __name__ == "__main__":
     # Load or train model
-    model_path = "basic_cnn.pth"
+    model_path = "models/basic_cnn.pth"
     classifier = Classifier().to(device)
     
     if os.path.exists(model_path):
@@ -372,3 +341,4 @@ if __name__ == "__main__":
     # Run visualizations
     show_misclassified_images()
     show_gradcam_for_predictions(classifier, test_loader, classifier.conv_layers[-3], team_names)
+
